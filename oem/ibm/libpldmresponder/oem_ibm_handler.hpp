@@ -169,6 +169,9 @@ class Handler : public oem_platform::Handler
                         disableWatchDogTimer();
                         startStopTimer(false);
                         pldm::responder::utils::clearLicenseStatus();
+                        using namespace pldm::filetable;
+                        auto& fileTable=buildFileTable(FILE_TABLE_JSON);
+                        fileTable.clear();
                     }
                     else if (propVal ==
                              "xyz.openbmc_project.State.Host.HostState.Running")
@@ -176,11 +179,15 @@ class Handler : public oem_platform::Handler
                         hostOff = false;
                         hostTransitioningToOff = false;
                     }
-                    else if (
-                        propVal ==
-                        "xyz.openbmc_project.State.Host.HostState.TransitioningToOff")
+                    else if (propVal ==
+                             "xyz.openbmc_project.State.Host.HostState.TransitioningToOff")
                     {
                         hostTransitioningToOff = true;
+                    }
+                    else if (propVal ==
+                             "xyz.openbmc_project.State.Host.HostState.TransitioningToRunning")
+                    {
+                        (void)pldm::filetable::buildFileTable(FILE_TABLE_JSON);
                     }
                 }
             });
