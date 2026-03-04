@@ -491,6 +491,17 @@ class Handler : public oem_platform::Handler
     /** @brief update containerID in PDRs */
     void updateContainerID();
 
+    /** @brief Start dump transfer timeout timer
+     *  @param[in] fileHandle - the file handle of the dump being transferred
+     */
+    void startDumpTransferTimer(uint32_t fileHandle);
+
+    /** @brief Stop dump transfer timeout timer */
+    void stopDumpTransferTimer();
+
+    /** @brief Callback when dump transfer timeout expires */
+    void onDumpTransferTimeout();
+
     /** @brief read the state of a dimm sensor
      *   @param entityInstance - the entity instance id of the dimm sensor
      *   @return the state of the sensor
@@ -716,6 +727,13 @@ class Handler : public oem_platform::Handler
     std::unique_ptr<sdbusplus::bus::match_t> bootProgressMatch;
     /** @brief Timer used for monitoring surveillance pings from host */
     sdeventplus::utility::Timer<sdeventplus::ClockId::Monotonic> timer;
+
+    /** @brief Timer used for monitoring system dump transfer timeout */
+    std::unique_ptr<sdeventplus::utility::Timer<sdeventplus::ClockId::Monotonic>>
+        dumpTransferTimer;
+
+    /** @brief Active dump file handle being transferred */
+    uint32_t activeDumpFileHandle = 0;
 
     /** @brief vector of DBus property changed signal match for linkReset*/
     std::vector<std::unique_ptr<sdbusplus::bus::match_t>> matches;

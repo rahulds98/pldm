@@ -22,9 +22,12 @@ class DumpHandler : public FileHandler
         FileHandler(fileHandle), dumpType(fileType)
     {}
 
+    // Allow oem_ibm_platform::Handler to access private members for timeout handling
+    friend class pldm::responder::oem_ibm_platform::Handler;
+
     virtual void writeFromMemory(
         uint32_t offset, uint32_t length, uint64_t address,
-        oem_platform::Handler* /*oemPlatformHandler*/,
+        oem_platform::Handler* oemPlatformHandler,
         SharedAIORespData& sharedAIORespDataobj, sdeventplus::Event& event);
 
     virtual void readIntoMemory(
@@ -36,7 +39,7 @@ class DumpHandler : public FileHandler
                      oem_platform::Handler* /*oemPlatformHandler*/);
 
     virtual int write(const char* buffer, uint32_t offset, uint32_t& length,
-                      oem_platform::Handler* /*oemPlatformHandler*/,
+                      oem_platform::Handler* oemPlatformHandler,
                       struct fileack_status_metadata& /*metaDataObj*/);
 
     virtual int newFileAvailable(uint64_t length);
@@ -69,6 +72,7 @@ class DumpHandler : public FileHandler
 
   private:
     static int fd;             //!< fd to manage the dump offload to bmc
+    static oem_platform::Handler* oemHandler; //!< OEM platform handler for timer management (static to persist across instances)
     uint16_t dumpType;         //!< type of the dump
     std::string
         resDumpRequestDirPath; //!< directory where the resource

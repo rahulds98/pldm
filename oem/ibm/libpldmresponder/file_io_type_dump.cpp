@@ -9,6 +9,7 @@
 #include <libpldm/oem/ibm/file_io.h>
 #include <systemd/sd-bus.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 #include <com/ibm/Dump/Notify/server.hpp>
 #include <phosphor-logging/lg2.hpp>
@@ -41,6 +42,7 @@ static constexpr auto bmcDumpObjPath = "/xyz/openbmc_project/dump/bmc/entry";
 // resource dumps.
 
 int DumpHandler::fd = -1;
+oem_platform::Handler* DumpHandler::oemHandler = nullptr;
 namespace fs = std::filesystem;
 
 uint32_t DumpHandler::getDumpIdPrefix(uint16_t dumpType)
@@ -194,6 +196,13 @@ std::string DumpHandler::findDumpObjPath(uint32_t fileHandle)
 
 int DumpHandler::newFileAvailable(uint64_t length)
 {
+    // EXPERIMENTAL: Log for PLDM_FILE_TYPE_DUMP
+    if (dumpType == PLDM_FILE_TYPE_DUMP)
+    {
+        info("EXPERIMENTAL: newFileAvailable called for PLDM_FILE_TYPE_DUMP - fileHandle={FILEHANDLE}, dumpSize={SIZE} bytes ({SIZE_MB} MB)",
+             "FILEHANDLE", fileHandle, "SIZE", length, "SIZE_MB", (double)length / (1024 * 1024));
+    }
+
     static constexpr auto dumpInterface = "com.ibm.Dump.Notify";
     auto& bus = pldm::utils::DBusHandler::getBus();
 
@@ -310,10 +319,62 @@ int DumpHandler::postDataTransferCallBack(bool IsWriteToMemOp,
 }
 
 void DumpHandler::writeFromMemory(uint32_t, uint32_t length, uint64_t address,
-                                  oem_platform::Handler* /*oemPlatformHandler*/,
+                                  oem_platform::Handler* oemPlatformHandler,
                                   SharedAIORespData& sharedAIORespDataobj,
                                   sdeventplus::Event& event)
 {
+    // Store oemHandler for later use in fileAck
+    if (oemPlatformHandler != nullptr && oemHandler == nullptr)
+    {
+        oemHandler = oemPlatformHandler;
+    }
+
+    // EXPERIMENTAL: Write to file for PLDM_FILE_TYPE_DUMP
+    if (dumpType == PLDM_FILE_TYPE_DUMP)
+    {
+        info("EXPERIMENTAL: writeFromMemory called for PLDM_FILE_TYPE_DUMP - fileHandle={FILEHANDLE}, length={LENGTH}, address={ADDRESS}",
+             "FILEHANDLE", fileHandle, "LENGTH", length, "ADDRESS", lg2::hex, address);
+
+        if (DumpHandler::fd == -1)
+        {
+            // Define target file path
+            std::string dumpFilePath = "/tmp/dump_" + std::to_string(fileHandle) + ".bin";
+            info("EXPERIMENTAL: Opening dump file for writing: {PATH}", "PATH", dumpFilePath);
+            
+            DumpHandler::fd = open(dumpFilePath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (DumpHandler::fd < 0)
+            {
+                error("EXPERIMENTAL: Failed to open dump file {PATH}, errno={ERRNO}",
+                      "PATH", dumpFilePath, "ERRNO", errno);
+
+                FileHandler::dmaResponseToRemoteTerminus(sharedAIORespDataobj,
+                                                         PLDM_ERROR, 0);
+                FileHandler::deleteAIOobjects(nullptr, sharedAIORespDataobj);
+                return;
+            }
+            info("EXPERIMENTAL: Successfully opened dump file {PATH}, fd={FD}",
+                 "PATH", dumpFilePath, "FD", DumpHandler::fd);
+            
+            // Start 10-minute dump transfer timer
+            if (oemHandler != nullptr)
+            {
+                auto oemIbmHandler = dynamic_cast<oem_ibm_platform::Handler*>(oemHandler);
+                if (oemIbmHandler != nullptr)
+                {
+                    info("EXPERIMENTAL: Starting 10-minute dump transfer timer for fileHandle={FILEHANDLE}",
+                         "FILEHANDLE", fileHandle);
+                    oemIbmHandler->startDumpTransferTimer(fileHandle);
+                }
+            }
+        }
+
+        info("EXPERIMENTAL: Transferring file data to file, fd={FD}", "FD", DumpHandler::fd);
+        transferFileDataToSocket(DumpHandler::fd, length, address,
+                                 sharedAIORespDataobj, event);
+        return;
+    }
+
+    // Original code for other dump types
     if (DumpHandler::fd == -1)
     {
         auto socketInterface = getOffloadUri(fileHandle);
@@ -342,9 +403,55 @@ void DumpHandler::writeFromMemory(uint32_t, uint32_t length, uint64_t address,
 }
 
 int DumpHandler::write(const char* buffer, uint32_t, uint32_t& length,
-                       oem_platform::Handler* /*oemPlatformHandler*/,
+                       oem_platform::Handler* oemPlatformHandler,
                        struct fileack_status_metadata& /*metaDataObj*/)
 {
+    // EXPERIMENTAL: Write to file for PLDM_FILE_TYPE_DUMP
+    if (dumpType == PLDM_FILE_TYPE_DUMP)
+    {
+        info("EXPERIMENTAL: write called for PLDM_FILE_TYPE_DUMP - fileHandle={FILEHANDLE}, length={LENGTH}, fd={FD}",
+             "FILEHANDLE", fileHandle, "LENGTH", length, "FD", DumpHandler::fd);
+
+        // Start timer on first write (when fd is not yet open)
+        if (DumpHandler::fd < 0 && oemPlatformHandler != nullptr)
+        {
+            auto oemIbmHandler = dynamic_cast<oem_ibm_platform::Handler*>(oemPlatformHandler);
+            if (oemIbmHandler != nullptr)
+            {
+                info("EXPERIMENTAL: Starting 10-minute dump transfer timer for fileHandle={FILEHANDLE}",
+                     "FILEHANDLE", fileHandle);
+                oemIbmHandler->startDumpTransferTimer(fileHandle);
+            }
+        }
+
+        int rc = ::write(DumpHandler::fd, buffer, length);
+        if (rc < 0)
+        {
+            rc = -errno;
+            error("EXPERIMENTAL: Failed to write to dump file, errno={ERRNO}, rc={RC}",
+                  "ERRNO", errno, "RC", rc);
+            close(DumpHandler::fd);
+            DumpHandler::fd = -1;
+            return PLDM_ERROR;
+        }
+
+        // Get current file size
+        off_t currentSize = lseek(DumpHandler::fd, 0, SEEK_CUR);
+        if (currentSize >= 0)
+        {
+            info("EXPERIMENTAL: Successfully wrote {BYTES} bytes, current file size: {SIZE} bytes ({SIZE_MB} MB)",
+                 "BYTES", rc, "SIZE", currentSize, "SIZE_MB", (double)currentSize / (1024 * 1024));
+        }
+        else
+        {
+            info("EXPERIMENTAL: Successfully wrote {BYTES} bytes to dump file", "BYTES", rc);
+        }
+        
+        length = rc;  // Update length with actual bytes written
+        return PLDM_SUCCESS;
+    }
+
+    // Original code for other dump types
     int rc = writeToUnixSocket(DumpHandler::fd, buffer, length);
     if (rc < 0)
     {
@@ -363,6 +470,18 @@ int DumpHandler::write(const char* buffer, uint32_t, uint32_t& length,
 
 int DumpHandler::fileAck(uint8_t fileStatus)
 {
+    // Stop the dump transfer timer if it's running
+    if (oemHandler != nullptr)
+    {
+        auto oemIbmHandler = dynamic_cast<oem_ibm_platform::Handler*>(oemHandler);
+        if (oemIbmHandler != nullptr)
+        {
+            info("Stopping dump transfer timer for fileHandle={FILEHANDLE}",
+                 "FILEHANDLE", fileHandle);
+            oemIbmHandler->stopDumpTransferTimer();
+        }
+    }
+    
     auto path = findDumpObjPath(fileHandle);
     if (dumpType == PLDM_FILE_TYPE_RESOURCE_DUMP_PARMS)
     {
@@ -451,6 +570,39 @@ int DumpHandler::fileAck(uint8_t fileStatus)
         if (dumpType == PLDM_FILE_TYPE_DUMP ||
             dumpType == PLDM_FILE_TYPE_RESOURCE_DUMP)
         {
+            // EXPERIMENTAL: Handle file cleanup for PLDM_FILE_TYPE_DUMP
+            if (dumpType == PLDM_FILE_TYPE_DUMP)
+            {
+                info("EXPERIMENTAL: fileAck cleanup for PLDM_FILE_TYPE_DUMP - fileHandle={FILEHANDLE}, fileStatus={STATUS}",
+                     "FILEHANDLE", fileHandle, "STATUS", fileStatus);
+                
+                PropertyValue value{true};
+                DBusMapping dbusMapping{path, dumpEntry, "Offloaded", "bool"};
+                try
+                {
+                    pldm::utils::DBusHandler().setDbusProperty(dbusMapping, value);
+                    info("EXPERIMENTAL: Set Offloaded property to true");
+                }
+                catch (const std::exception& e)
+                {
+                    error("EXPERIMENTAL: Failed to set Offloaded property, error - {ERROR}", "ERROR", e);
+                    return PLDM_ERROR;
+                }
+
+                if (DumpHandler::fd >= 0)
+                {
+                    info("EXPERIMENTAL: Closing dump file, fd={FD}", "FD", DumpHandler::fd);
+                    close(DumpHandler::fd);
+                    DumpHandler::fd = -1;
+                }
+                
+                std::string dumpFilePath = "/tmp/dump_" + std::to_string(fileHandle) + ".bin";
+                info("EXPERIMENTAL: Dump file written to {PATH}", "PATH", dumpFilePath);
+                info("EXPERIMENTAL: Skipping socket cleanup and OffloadUri reset for PLDM_FILE_TYPE_DUMP");
+                return PLDM_SUCCESS;
+            }
+
+            // Original code for PLDM_FILE_TYPE_RESOURCE_DUMP
             PropertyValue value{true};
             DBusMapping dbusMapping{path, dumpEntry, "Offloaded", "bool"};
             try
@@ -570,8 +722,8 @@ int DumpHandler::newFileAvailableWithMetaData(
     uint64_t length, uint32_t metaDataValue1, uint32_t /*metaDataValue2*/,
     uint32_t /*metaDataValue3*/, uint32_t /*metaDataValue4*/)
 {
-    info("File handle in newFileAvailableWithMetaData is {FILEHANDLE}",
-         "FILEHANDLE", fileHandle);
+    info("newFileAvailableWithMetaData: fileHandle={FILEHANDLE}, dumpSize={SIZE} bytes ({SIZE_MB} MB), metaDataValue1={META1}",
+         "FILEHANDLE", fileHandle, "SIZE", length, "SIZE_MB", (double)length / (1024 * 1024), "META1", metaDataValue1);
     static constexpr auto dumpInterface = "com.ibm.Dump.Notify";
     auto& bus = pldm::utils::DBusHandler::getBus();
 
@@ -627,6 +779,18 @@ int DumpHandler::fileAckWithMetaData(
 {
     info("File Handle in fileAckWithMetaData is {FILEHANDLE}", "FILEHANDLE",
          fileHandle);
+
+    // Stop the dump transfer timer if it's running
+    if (oemHandler != nullptr)
+    {
+        auto oemIbmHandler = dynamic_cast<oem_ibm_platform::Handler*>(oemHandler);
+        if (oemIbmHandler != nullptr)
+        {
+            info("Stopping dump transfer timer for fileHandle={FILEHANDLE}",
+                 "FILEHANDLE", fileHandle);
+            oemIbmHandler->stopDumpTransferTimer();
+        }
+    }
 
     auto path = findDumpObjPath(fileHandle);
     uint8_t statusCode = (uint8_t)metaDataValue2;
@@ -761,6 +925,37 @@ int DumpHandler::fileAckWithMetaData(
         if (dumpType == PLDM_FILE_TYPE_DUMP ||
             dumpType == PLDM_FILE_TYPE_RESOURCE_DUMP)
         {
+            // EXPERIMENTAL: Handle file cleanup for PLDM_FILE_TYPE_DUMP
+            if (dumpType == PLDM_FILE_TYPE_DUMP)
+            {
+                info("EXPERIMENTAL: fileAckWithMetaData cleanup for PLDM_FILE_TYPE_DUMP - fileHandle={FILEHANDLE}, metaDataValue1={META1}, metaDataValue2={META2}",
+                     "FILEHANDLE", fileHandle, "META1", metaDataValue1, "META2", metaDataValue2);
+                
+                PropertyValue value{true};
+                DBusMapping dbusMapping{path, dumpEntry, "Offloaded", "bool"};
+                try
+                {
+                    pldm::utils::DBusHandler().setDbusProperty(dbusMapping, value);
+                    info("EXPERIMENTAL: Set Offloaded property to true");
+                }
+                catch (const sdbusplus::exception_t& e)
+                {
+                    error("EXPERIMENTAL: Failed to set Offloaded property, error - {ERROR}", "ERROR", e);
+                    pldm::utils::reportError(
+                        "xyz.openbmc_project.PLDM.Error.fileAckWithMetaData.DumpEntryOffloadedSetFail");
+                    return PLDM_ERROR;
+                }
+
+                close(DumpHandler::fd);
+                DumpHandler::fd = -1;
+                
+                std::string dumpFilePath = "/tmp/dump_" + std::to_string(fileHandle) + ".bin";
+                info("EXPERIMENTAL: Dump file written to {PATH}", "PATH", dumpFilePath);
+                info("EXPERIMENTAL: Skipping socket cleanup and OffloadUri reset for PLDM_FILE_TYPE_DUMP");
+                return PLDM_SUCCESS;
+            }
+
+            // Original code for PLDM_FILE_TYPE_RESOURCE_DUMP
             PropertyValue value{true};
             DBusMapping dbusMapping{path, dumpEntry, "Offloaded", "bool"};
             try

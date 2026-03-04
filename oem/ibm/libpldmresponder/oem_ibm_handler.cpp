@@ -1,6 +1,7 @@
 #include "oem_ibm_handler.hpp"
 
 #include "collect_slot_vpd.hpp"
+#include "file_io_type_dump.hpp"
 #include "file_io_type_lid.hpp"
 #include "libpldmresponder/file_io.hpp"
 #include "libpldmresponder/pdr_utils.hpp"
@@ -2126,6 +2127,63 @@ void pldm::responder::oem_ibm_platform::Handler::triggerHostEffecter(
             return;
         }
     }
+}
+
+void Handler::startDumpTransferTimer(uint32_t fileHandle)
+{
+    info("Starting dump transfer timer for fileHandle {FILE_HANDLE}, timeout: 10 seconds (TESTING)",
+         "FILE_HANDLE", fileHandle);
+    
+    // Stop any existing timer
+    stopDumpTransferTimer();
+    
+    // Store the active file handle
+    activeDumpFileHandle = fileHandle;
+    
+    // Create and start the timer
+    dumpTransferTimer = std::make_unique<
+        sdeventplus::utility::Timer<sdeventplus::ClockId::Monotonic>>(
+        event, std::bind(&Handler::onDumpTransferTimeout, this));
+    
+    // Start timer for 30 seconds (TESTING - change back to minutes(10) for production)
+    dumpTransferTimer->restart(std::chrono::seconds(10));
+    
+    info("Dump transfer timer started successfully for fileHandle {FILE_HANDLE}",
+         "FILE_HANDLE", fileHandle);
+}
+
+void Handler::stopDumpTransferTimer()
+{
+    if (dumpTransferTimer)
+    {
+        info("Stopping dump transfer timer for fileHandle {FILE_HANDLE}",
+             "FILE_HANDLE", activeDumpFileHandle);
+        dumpTransferTimer.reset();
+        activeDumpFileHandle = 0;
+    }
+}
+
+void Handler::onDumpTransferTimeout()
+{
+    error("Dump transfer timeout expired for fileHandle {FILE_HANDLE} - closing file descriptor",
+          "FILE_HANDLE", activeDumpFileHandle);
+    
+    // Close the static file descriptor in DumpHandler
+    if (DumpHandler::fd >= 0)
+    {
+        info("Closing dump file descriptor {FD}", "FD",
+             DumpHandler::fd);
+        close(DumpHandler::fd);
+        DumpHandler::fd = -1;
+    }
+    
+    // Reset the active file handle
+    activeDumpFileHandle = 0;
+    
+    // Timer will be automatically cleaned up
+    dumpTransferTimer.reset();
+    
+    error("Dump transfer aborted due to timeout");
 }
 
 } // namespace oem_ibm_platform
