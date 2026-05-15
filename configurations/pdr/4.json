@@ -164,6 +164,32 @@
                     ]
                 }
             ]
+        },
+        {
+            "pdrType": 2,
+            "entries": [
+                {
+                    "type": 135,
+                    "instance": 1,
+                    "container": 1,
+                    "terminus_handle": 0,
+                    "sensor_init": 0,
+                    "sensor_auxiliary_names_pdr": false,
+                    "is_linear": true,
+                    "sensor_data_size": 5,
+                    "resolution": 1.0,
+                    "offset": 0.0,
+                    "max_readable": 4294967295,
+                    "min_readable": 0,
+                    "range_field_format": 5,
+                    "dbus": {
+                        "path": "/xyz/openbmc_project/dump/system",
+                        "interface": "xyz.openbmc_project.Dump.Entry",
+                        "property_name": "DumpId",
+                        "property_type": "uint32_t"
+                    }
+                }
+            ]
         }
     ]
 }

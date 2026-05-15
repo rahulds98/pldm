@@ -106,6 +106,11 @@ class Handler : public CmdHandler
             [this](pldm_tid_t, const pldm_msg* request, size_t payloadLength) {
                 return this->getStateSensorReadings(request, payloadLength);
             });
+        handlers.emplace(
+            PLDM_GET_SENSOR_READING,
+            [this](pldm_tid_t, const pldm_msg* request, size_t payloadLength) {
+                return this->getSensorReading(request, payloadLength);
+            });
 
         // Default handler for PLDM Events
         eventHandlers[PLDM_SENSOR_EVENT].emplace_back(
@@ -295,6 +300,14 @@ class Handler : public CmdHandler
      */
     Response getStateSensorReadings(const pldm_msg* request,
                                     size_t payloadLength);
+
+    /** @brief Handler for getSensorReading (numeric sensors)
+     *
+     *  @param[in] request - Request message
+     *  @param[in] payloadLength - Request payload length
+     *  @return Response - PLDM Response message
+     */
+    Response getSensorReading(const pldm_msg* request, size_t payloadLength);
 
     /** @brief Handler for setStateEffecterStates
      *

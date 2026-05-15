@@ -7,10 +7,12 @@
 #include "host-bmc/dbus/serialize.hpp"
 #include "pdr.hpp"
 #include "pdr_numeric_effecter.hpp"
+#include "pdr_numeric_sensor.hpp"
 #include "pdr_state_effecter.hpp"
 #include "pdr_state_sensor.hpp"
 #include "pdr_utils.hpp"
 #include "platform_numeric_effecter.hpp"
+#include "platform_numeric_sensor.hpp"
 #include "platform_state_effecter.hpp"
 #include "platform_state_sensor.hpp"
 #include "pldmd/handler.hpp"
@@ -99,6 +101,14 @@ void Handler::generate(const pldm::utils::DBusHandler& dBusIntf,
                 RepoInterface& repo,
                 pldm_entity_association_tree* bmcEntityTree) {
              pdr_numeric_effecter::generateNumericEffecterPDR<
+                 pldm::utils::DBusHandler, Handler>(dBusIntf, json, *this, repo,
+                                                    bmcEntityTree);
+         }},
+        {PLDM_NUMERIC_SENSOR_PDR,
+         [this](const DBusHandler& dBusIntf, const auto& json,
+                RepoInterface& repo,
+                pldm_entity_association_tree* bmcEntityTree) {
+             pdr_numeric_sensor::generateNumericSensorPDR<
                  pldm::utils::DBusHandler, Handler>(dBusIntf, json, *this, repo,
                                                     bmcEntityTree);
          }},
@@ -838,6 +848,14 @@ void Handler::generateTerminusLocatorPDR(Repo& repo)
             pdr->terminus_handle,
             std::make_tuple(pdr->tid, locatorValue->eid, pdr->validity));
     }
+}
+
+Response Handler::getSensorReading(const pldm_msg* request,
+                                   size_t payloadLength)
+{
+    return platform_numeric_sensor::getSensorReading<Handler>(request,
+                                                               payloadLength,
+                                                               *this);
 }
 
 Response Handler::getStateSensorReadings(const pldm_msg* request,
