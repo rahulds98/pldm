@@ -65,6 +65,23 @@ class Handler : public CmdHandler
         pldm::pdr::CompositeCount compSensorCnt, uint16_t sensorId,
         std::vector<get_sensor_state_field>& stateField) = 0;
 
+    /** @brief Interface to get numeric sensor reading for OEM sensors
+     *
+     *  @param[in] sensorId - sensor ID
+     *  @param[in] entityType - entity type corresponding to the sensor
+     *  @param[in] entityInstance - entity instance number
+     *  @param[in] sensorDataSize - sensor data size
+     *  @param[out] sensorOperationalState - sensor operational state
+     *  @param[out] sensorReading - the numeric sensor reading value
+     *
+     *  @return - Success or failure in getting the reading. Returns failure in
+     *            terms of PLDM completion codes
+     */
+    virtual int getOemNumericSensorReadingHandler(
+        uint16_t sensorId, pldm::pdr::EntityType entityType,
+        pldm::pdr::EntityInstance entityInstance, uint8_t sensorDataSize,
+        uint8_t& sensorOperationalState, uint8_t* sensorReading) = 0;
+
     /** @brief Interface to set the effecter requested by pldm requester
      *         for OEM types. Each individual oem type should implement
      *         it's own handler.

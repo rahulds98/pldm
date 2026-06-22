@@ -106,6 +106,11 @@ class Handler : public CmdHandler
             [this](pldm_tid_t, const pldm_msg* request, size_t payloadLength) {
                 return this->getStateSensorReadings(request, payloadLength);
             });
+        handlers.emplace(
+            PLDM_GET_SENSOR_READING,
+            [this](pldm_tid_t, const pldm_msg* request, size_t payloadLength) {
+                return this->getSensorReading(request, payloadLength);
+            });
 
         // Default handler for PLDM Events
         eventHandlers[PLDM_SENSOR_EVENT].emplace_back(
@@ -294,7 +299,14 @@ class Handler : public CmdHandler
      *  @return Response - PLDM Response message
      */
     Response getStateSensorReadings(const pldm_msg* request,
-                                    size_t payloadLength);
+
+    /** @brief Handler for getSensorReading
+     *
+     *  @param[in] request - Request message
+     *  @param[in] payloadLength - Request payload length
+     *  @return Response - PLDM Response message
+     */
+    Response getSensorReading(const pldm_msg* request, size_t payloadLength);
 
     /** @brief Handler for setStateEffecterStates
      *
@@ -608,7 +620,21 @@ bool isOemNumericEffecter(
 bool isOemStateSensor(Handler& handler, uint16_t sensorId,
                       uint8_t sensorRearmCount, uint8_t& compSensorCnt,
                       uint16_t& entityType, uint16_t& entityInstance,
-                      uint16_t& stateSetId, uint16_t& containerId);
+/** @brief Function to check if a numeric sensor falls in OEM range
+ *         A sensor is considered to be oem if the entity type falls in oem range
+ *
+ *  @param[in] handler - the interface object
+ *  @param[in] sensorId - sensor id
+ *  @param[out] entityType - entity type
+ *  @param[out] entityInstance - entity instance number
+ *  @param[out] sensorDataSize - sensor data size
+ *
+ *  @return true if the sensor is OEM. All out parameters are invalid
+ *               for a non OEM sensor
+ */
+bool isOemNumericSensor(Handler& handler, uint16_t sensorId,
+                        uint16_t& entityType, uint16_t& entityInstance,
+                        uint8_t& sensorDataSize);
 
 /** @brief Function to check if an effecter falls in OEM range
  *         An effecter is considered to be oem if either of entity

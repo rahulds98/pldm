@@ -905,6 +905,70 @@ Response Handler::getStateSensorReadings(const pldm_msg* request,
     }
 
     return response;
+
+Response Handler::getSensorReading(const pldm_msg* request,
+                                   size_t payloadLength)
+{
+    uint16_t sensorId{};
+    uint8_t rearmEventState{};
+
+    if (payloadLength != PLDM_GET_SENSOR_READING_REQ_BYTES)
+    {
+        return ccOnlyResponse(request, PLDM_ERROR_INVALID_LENGTH);
+    }
+
+    int rc = decode_get_sensor_reading_req(request, payloadLength, &sensorId,
+                                           &rearmEventState);
+
+    if (rc != PLDM_SUCCESS)
+    {
+        return ccOnlyResponse(request, rc);
+    }
+
+    uint16_t entityType{};
+    uint16_t entityInstance{};
+    uint8_t sensorDataSize{};
+
+    // Check if this is an OEM numeric sensor
+    if (isOemNumericSensor(*this, sensorId, entityType, entityInstance,
+                          sensorDataSize) &&
+        oemPlatformHandler && !sensorDbusObjMaps.contains(sensorId))
+    {
+        uint8_t sensorOperationalState{};
+        std::vector<uint8_t> sensorReading(sensorDataSize);
+
+        rc = oemPlatformHandler->getOemNumericSensorReadingHandler(
+            sensorId, entityType, entityInstance, sensorDataSize,
+            sensorOperationalState, sensorReading.data());
+
+        if (rc != PLDM_SUCCESS)
+        {
+            return ccOnlyResponse(request, rc);
+        }
+
+        Response response(sizeof(pldm_msg_hdr) +
+                         PLDM_GET_SENSOR_READING_MIN_RESP_BYTES +
+                         sensorDataSize);
+        auto responsePtr = reinterpret_cast<pldm_msg*>(response.data());
+
+        rc = encode_get_sensor_reading_resp(
+            request->hdr.instance_id, PLDM_SUCCESS, sensorDataSize,
+            sensorOperationalState, PLDM_SENSOR_NORMAL, PLDM_SENSOR_UNKNOWN,
+            PLDM_SENSOR_UNKNOWN, sensorReading.data(), responsePtr,
+            response.size() - sizeof(pldm_msg_hdr));
+
+        if (rc != PLDM_SUCCESS)
+        {
+            return ccOnlyResponse(request, rc);
+        }
+
+        return response;
+    }
+
+    // Handle non-OEM sensors or sensors with D-Bus mappings
+    // For now, return invalid sensor ID for non-OEM sensors
+    return ccOnlyResponse(request, PLDM_PLATFORM_INVALID_SENSOR_ID);
+}
 }
 
 void Handler::_processPostGetPDRActions(sdeventplus::source::EventBase&
@@ -1115,6 +1179,63 @@ bool isOemStateEffecter(Handler& handler, uint16_t effecterId,
         }
     }
     return false;
+
+bool isOemNumericSensor(Handler& handler, uint16_t sensorId,
+                        uint16_t& entityType, uint16_t& entityInstance,
+                        uint8_t& sensorDataSize)
+{
+    pldm_numeric_sensor_value_pdr* pdr = nullptr;
+
+    std::unique_ptr<pldm_pdr, decltype(&pldm_pdr_destroy)>
+        numericSensorPdrRepo(pldm_pdr_init(), pldm_pdr_destroy);
+    if (!numericSensorPdrRepo)
+    {
+        error("Failed to instantiate numeric sensor PDR repository");
+        return false;
+    }
+    Repo numericSensorPDRs(numericSensorPdrRepo.get());
+    getRepoByType(handler.getRepo(), numericSensorPDRs,
+                  PLDM_NUMERIC_SENSOR_PDR);
+
+    if (numericSensorPDRs.empty())
+    {
+        error("Failed to get record by PDR type");
+        return false;
+    }
+
+    PdrEntry pdrEntry{};
+    auto pdrRecord = numericSensorPDRs.getFirstRecord(pdrEntry);
+    while (pdrRecord)
+    {
+        pdr = reinterpret_cast<pldm_numeric_sensor_value_pdr*>(pdrEntry.data);
+        assert(pdr != nullptr);
+        if (pdr->sensor_id != sensorId)
+        {
+            pdr = nullptr;
+            pdrRecord = numericSensorPDRs.getNextRecord(pdrRecord, pdrEntry);
+            continue;
+        }
+
+        auto tmpEntityType = pdr->entity_type;
+        auto tmpEntityInstance = pdr->entity_instance;
+        auto tmpSensorDataSize = pdr->sensor_data_size;
+
+        // Check if entity type is in OEM range
+        if (tmpEntityType >= PLDM_OEM_ENTITY_TYPE_START &&
+            tmpEntityType <= PLDM_OEM_ENTITY_TYPE_END)
+        {
+            entityType = tmpEntityType;
+            entityInstance = tmpEntityInstance;
+            sensorDataSize = tmpSensorDataSize;
+            return true;
+        }
+        else
+        {
+            return false;
+        }
+    }
+    return false;
+}
 }
 
 void Handler::setEventReceiver()

@@ -85,6 +85,71 @@ int pldm::responder::oem_ibm_platform::Handler::
     return rc;
 }
 
+int Handler::getOemNumericSensorReadingHandler(
+    uint16_t sensorId, pldm::pdr::EntityType entityType,
+    pldm::pdr::EntityInstance entityInstance, uint8_t sensorDataSize,
+    uint8_t& sensorOperationalState, uint8_t* sensorReading)
+{
+    int rc = PLDM_SUCCESS;
+
+    // TODO: Define your OEM entity type (must match the one in buildOEMPDR)
+    constexpr uint16_t PLDM_OEM_IBM_ENTITY_CUSTOM_SENSOR = 0x8000;
+
+    if (entityType == PLDM_OEM_IBM_ENTITY_CUSTOM_SENSOR)
+    {
+        // TODO: Fill in your D-Bus details
+        static constexpr auto dbusObjectPath = "/xyz/openbmc_project/YOUR/OBJECT/PATH";
+        static constexpr auto dbusInterface = "xyz.openbmc_project.YOUR.Interface";
+        static constexpr auto dbusMethod = "YourMethodName";
+
+        try
+        {
+            // Call D-Bus method to get uint32 value
+            auto bus = sdbusplus::bus::new_default();
+            auto method = bus.new_method_call(
+                dBusIntf->getService(dbusObjectPath, dbusInterface).c_str(),
+                dbusObjectPath, dbusInterface, dbusMethod);
+
+            // If your method takes parameters, add them here:
+            // method.append(param1, param2, ...);
+
+            auto reply = bus.call(method);
+            uint32_t value = 0;
+            reply.read(value);
+
+            // Pack the uint32 value into sensorReading based on sensorDataSize
+            if (sensorDataSize == PLDM_SENSOR_DATA_SIZE_UINT32)
+            {
+                std::memcpy(sensorReading, &value, sizeof(uint32_t));
+            }
+            else
+            {
+                error(
+                    "Unexpected sensor data size {SIZE} for sensor ID {SENSOR_ID}",
+                    "SIZE", sensorDataSize, "SENSOR_ID", sensorId);
+                return PLDM_ERROR_INVALID_DATA;
+            }
+
+            sensorOperationalState = PLDM_SENSOR_ENABLED;
+            rc = PLDM_SUCCESS;
+        }
+        catch (const std::exception& e)
+        {
+            error(
+                "Failed to read numeric sensor {SENSOR_ID} from D-Bus: {ERROR}",
+                "SENSOR_ID", sensorId, "ERROR", e);
+            rc = PLDM_ERROR;
+        }
+    }
+    else
+    {
+        rc = PLDM_PLATFORM_INVALID_SENSOR_ID;
+    }
+
+    return rc;
+}
+}
+
 std::vector<InstanceInfo>
     pldm::responder::oem_ibm_platform::Handler::generateProcAndDcmIDs()
 {
@@ -942,6 +1007,76 @@ void buildAllDimmSensorPDR(oem_ibm_platform::Handler* platformHandler,
     }
 }
 
+void buildOemNumericSensorPDR(oem_ibm_platform::Handler* platformHandler,
+                              uint16_t entityType, uint16_t entityInstance,
+                              pdr_utils::Repo& repo)
+{
+    size_t pdrSize = sizeof(pldm_numeric_sensor_value_pdr);
+    std::vector<uint8_t> entry{};
+    entry.resize(pdrSize);
+    pldm_numeric_sensor_value_pdr* pdr =
+        reinterpret_cast<pldm_numeric_sensor_value_pdr*>(entry.data());
+    if (!pdr)
+    {
+        error("Failed to get record by PDR type");
+        return;
+    }
+
+    pdr->hdr.record_handle = 0;
+    pdr->hdr.version = 1;
+    pdr->hdr.type = PLDM_NUMERIC_SENSOR_PDR;
+    pdr->hdr.record_change_num = 0;
+    pdr->hdr.length =
+        sizeof(pldm_numeric_sensor_value_pdr) - sizeof(pldm_pdr_hdr);
+    pdr->terminus_handle = TERMINUS_HANDLE;
+    pdr->sensor_id = platformHandler->getNextSensorId();
+    pdr->entity_type = entityType;
+    pdr->entity_instance = entityInstance;
+    pdr->container_id = 1; // default
+    pdr->sensor_init = PLDM_NO_INIT;
+    pdr->sensor_auxiliary_names_pdr = false;
+    pdr->base_unit = 0;
+    pdr->unit_modifier = 0;
+    pdr->rate_unit = 0;
+    pdr->base_oem_unit_handle = 0;
+    pdr->aux_unit = 0;
+    pdr->aux_unit_modifier = 0;
+    pdr->aux_rate_unit = 0;
+    pdr->rel = 0;
+    pdr->aux_oem_unit_handle = 0;
+    pdr->is_linear = true;
+    pdr->sensor_data_size = PLDM_SENSOR_DATA_SIZE_UINT32;
+    pdr->resolution = 1.00;
+    pdr->offset = 0.00;
+    pdr->accuracy = 0;
+    pdr->plus_tolerance = 0;
+    pdr->minus_tolerance = 0;
+    pdr->hysteresis.value_u32 = 0;
+    pdr->supported_thresholds.byte = 0;
+    pdr->threshold_and_hysteresis_volatility.byte = 0;
+    pdr->state_transition_interval = 0.00;
+    pdr->update_interval = 0.00;
+    pdr->max_readable.value_u32 = 0xFFFFFFFF;
+    pdr->min_readable.value_u32 = 0x0;
+    pdr->range_field_format = PLDM_RANGE_FIELD_FORMAT_UINT32;
+    pdr->range_field_support.byte = 0;
+    pdr->nominal_value.value_u32 = 0;
+    pdr->normal_max.value_u32 = 0xFFFFFFFF;
+    pdr->normal_min.value_u32 = 0;
+    pdr->warning_high.value_u32 = 0;
+    pdr->warning_low.value_u32 = 0;
+    pdr->critical_high.value_u32 = 0;
+    pdr->critical_low.value_u32 = 0;
+    pdr->fatal_high.value_u32 = 0;
+    pdr->fatal_low.value_u32 = 0;
+
+    pldm::responder::pdr_utils::PdrEntry pdrEntry{};
+    pdrEntry.data = entry.data();
+    pdrEntry.size = pdrSize;
+    repo.addRecord(pdrEntry);
+}
+}
+
 void pldm::responder::oem_ibm_platform::Handler::buildOEMPDR(
     pdr_utils::Repo& repo)
 {
@@ -1019,6 +1154,12 @@ void pldm::responder::oem_ibm_platform::Handler::buildOEMPDR(
     sensorId =
         findStateSensorId(repo.getPdr(), 0, PLDM_OEM_IBM_ENTITY_FIRMWARE_UPDATE,
                           ENTITY_INSTANCE_0, 1, PLDM_OEM_IBM_BOOT_SIDE_RENAME);
+
+    // Build OEM numeric sensor PDR for custom uint32 sensor
+    // TODO: Define your OEM entity type in the range 0x8000-0xFFFF
+    constexpr uint16_t PLDM_OEM_IBM_ENTITY_CUSTOM_SENSOR = 0x8000;
+    buildOemNumericSensorPDR(this, PLDM_OEM_IBM_ENTITY_CUSTOM_SENSOR,
+                             ENTITY_INSTANCE_0, repo);
     codeUpdate->setBootSideRenameStateSensor(sensorId);
 }
 

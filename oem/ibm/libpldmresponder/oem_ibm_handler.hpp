@@ -344,7 +344,12 @@ class Handler : public oem_platform::Handler
         pldm::pdr::EntityInstance entityInstance,
         pldm::pdr::ContainerID containerId, pldm::pdr::StateSetId stateSetId,
         pldm::pdr::CompositeCount compSensorCnt, uint16_t sensorId,
-        std::vector<get_sensor_state_field>& stateField);
+        std::vector<get_sensor_state_field>& stateField) override;
+
+    int getOemNumericSensorReadingHandler(
+        uint16_t sensorId, pldm::pdr::EntityType entityType,
+        pldm::pdr::EntityInstance entityInstance, uint8_t sensorDataSize,
+        uint8_t& sensorOperationalState, uint8_t* sensorReading) override;
 
     int oemSetStateEffecterStatesHandler(
         uint16_t entityType, uint16_t stateSetId, uint8_t compEffecterCnt,
