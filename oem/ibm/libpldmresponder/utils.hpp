@@ -169,6 +169,18 @@ void hostPCIETopologyIntf(
 std::pair<std::string, std::string> getSlotAndAdapter(
     const std::string& portLocationCode);
 
+/** @brief Fetch a fresh inventory object tree and hold it, so that all the
+ *  getObjectPathByLocationCode() lookups until clearInventorySnapshot() share
+ *  one GetManagedObjects call. If the fetch fails, an error is logged and the
+ *  lookups return an empty path.
+ */
+void refreshInventorySnapshot();
+
+/** @brief Release the inventory object tree held by
+ *  refreshInventorySnapshot()
+ */
+void clearInventorySnapshot();
+
 /** @brief Fetch D-Bus object path based on location details and the type of
  * Inventory Item
  *
