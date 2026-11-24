@@ -536,6 +536,32 @@ void hostChapDataIntf(
         "/xyz/openbmc_project/pldm", dbusToFilehandlerObj);
 }
 
+// Inventory object tree held for the duration of one topology file parse
+static ObjectValueTree inventorySnapshot;
+
+void refreshInventorySnapshot()
+{
+    inventorySnapshot.clear();
+    try
+    {
+        inventorySnapshot = pldm::utils::DBusHandler::getManagedObj(
+            "xyz.openbmc_project.Inventory.Manager",
+            "/xyz/openbmc_project/inventory");
+        info("Fetched a fresh inventory snapshot with {NUM} objects", "NUM",
+             inventorySnapshot.size());
+    }
+    catch (const std::exception& e)
+    {
+        error("Failed to fetch the inventory snapshot ERROR={ERR_EXCEP}",
+              "ERR_EXCEP", e.what());
+    }
+}
+
+void clearInventorySnapshot()
+{
+    inventorySnapshot.clear();
+}
+
 std::string getObjectPathByLocationCode(const std::string& locationCode,
                                         const std::string& inventoryItemType)
 {
@@ -544,22 +570,7 @@ std::string getObjectPathByLocationCode(const std::string& locationCode,
     std::string inventoryIface("xyz.openbmc_project.Inventory.Item");
 
     std::string path;
-    ObjectValueTree objects;
-    try
-    {
-        objects = pldm::utils::DBusHandler::getManagedObj(
-            "xyz.openbmc_project.Inventory.Manager",
-            "/xyz/openbmc_project/inventory");
-    }
-    catch (const std::exception& e)
-    {
-        error(
-            "Look up of inventory objects failed for location {LOC_CODE} ERROR={ERR_EXCEP}",
-            "LOC_CODE", locationCode, "ERR_EXCEP", e.what());
-        return path;
-    }
-
-    for (const auto& objPath : objects)
+    for (const auto& objPath : inventorySnapshot)
     {
         InterfaceMap interfaces = objPath.second;
         if (interfaces.contains(inventoryItemType) &&

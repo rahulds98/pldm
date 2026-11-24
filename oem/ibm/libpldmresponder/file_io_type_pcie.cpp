@@ -146,6 +146,10 @@ int PCIeInfoHandler::fileAck(uint8_t /*fileStatus*/)
         {
             receivedFiles.clear();
 
+            // fetch a fresh inventory tree, all the location code lookups
+            // until the end of this file ack share it
+            pldm::responder::utils::refreshInventorySnapshot();
+
             // parse the topology blob and cache the information
             // for further processing
             parseTopologyData();
@@ -173,6 +177,9 @@ int PCIeInfoHandler::fileAck(uint8_t /*fileStatus*/)
             // the redfish/user to be able to ask the topology information again
             pldm::dbus::CustomDBus::getCustomDBus().updateTopologyProperty(
                 false);
+
+            // release the inventory tree held for this file ack
+            pldm::responder::utils::clearInventorySnapshot();
 
             // clear all the cached information
             clearTopologyInfo();
